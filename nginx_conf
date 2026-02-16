@@ -1,0 +1,37 @@
+# Nginx configuration for share.freedoms4.org
+server {
+    listen 80;
+    server_name share.freedoms4.org;
+
+    root /var/www/share;
+    index index.html index.php;
+
+    # Default upload limit (adjust to match your $RATE_LIMIT in index.php)
+    client_max_body_size 1024m;
+    client_body_timeout 600s;
+
+    # PHP handler
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/var/run/php/php8.2-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        include fastcgi_params;
+        fastcgi_request_buffering off;
+        fastcgi_buffering off;
+        fastcgi_read_timeout 3600s;
+        fastcgi_send_timeout 3600s;
+    }
+
+    # Serve uploaded files directly (no auth required for downloads)
+    location ~ ^/files/ {
+        try_files $uri =404;
+    }
+
+    # Default location
+    location / {
+        if ($request_method = POST) {
+            rewrite ^ /index.php last;
+        }
+        try_files $uri $uri/ /index.php$is_args$args;
+    }
+}
