@@ -3,7 +3,7 @@
 // CONFIGURATION
 // -------------------------
 $AUTH_USER = 'user';
-$AUTH_PASS = 'pass';
+$AUTH_PASS = 'pass'; // Change this to a strong password
 $UPLOAD_DIR = __DIR__ . '/files/';
 //$ALLOWED_TYPES = ['image/png', 'image/jpeg', 'application/pdf', 'text/plain']; // optional
 $ALLOWED_TYPES = [];
@@ -35,17 +35,17 @@ function get_client_ip() {
 
 function check_rate_limit($ip, $file_size) {
     global $RATE_LIMIT_DIR, $RATE_LIMIT, $RATE_LIMIT_PERIOD;
-
+    
     if (!is_dir($RATE_LIMIT_DIR)) {
         mkdir($RATE_LIMIT_DIR, 0700, true);
     }
-
+    
     $safe_ip = preg_replace('/[^a-zA-Z0-9\-_\.]/', '_', $ip);
     $rate_file = $RATE_LIMIT_DIR . $safe_ip . '.json';
-
+    
     $current_time = time();
     $usage_data = [];
-
+    
     if (file_exists($rate_file)) {
         $content = file_get_contents($rate_file);
         $usage_data = json_decode($content, true);
@@ -53,48 +53,48 @@ function check_rate_limit($ip, $file_size) {
             $usage_data = [];
         }
     }
-
+    
     $usage_data = array_filter($usage_data, function($entry) use ($current_time, $RATE_LIMIT_PERIOD) {
         return ($current_time - $entry['timestamp']) < $RATE_LIMIT_PERIOD;
     });
-
+    
     $total_usage = array_sum(array_column($usage_data, 'size'));
-
+    
     if ($total_usage + $file_size > $RATE_LIMIT) {
         return false;
     }
-
+    
     $usage_data[] = [
         'timestamp' => $current_time,
-        'size'      => $file_size,
+        'size' => $file_size
     ];
-
+    
     file_put_contents($rate_file, json_encode($usage_data, JSON_PRETTY_PRINT));
-
+    
     return true;
 }
 
 function get_remaining_quota($ip) {
     global $RATE_LIMIT_DIR, $RATE_LIMIT, $RATE_LIMIT_PERIOD;
-
+    
     $safe_ip = preg_replace('/[^a-zA-Z0-9\-_\.]/', '_', $ip);
     $rate_file = $RATE_LIMIT_DIR . $safe_ip . '.json';
-
+    
     if (!file_exists($rate_file)) {
         return $RATE_LIMIT;
     }
-
+    
     $content = file_get_contents($rate_file);
     $usage_data = json_decode($content, true);
     if (!is_array($usage_data)) {
         return $RATE_LIMIT;
     }
-
+    
     $current_time = time();
     $usage_data = array_filter($usage_data, function($entry) use ($current_time, $RATE_LIMIT_PERIOD) {
         return ($current_time - $entry['timestamp']) < $RATE_LIMIT_PERIOD;
     });
-
+    
     $total_usage = array_sum(array_column($usage_data, 'size'));
     return max(0, $RATE_LIMIT - $total_usage);
 }
@@ -131,8 +131,8 @@ if ($request_method === 'GET' && isset($_GET['quota'])) {
 // -------------------------
 // FILE DOWNLOAD (GET/HEAD)
 // -------------------------
-else if ($request_method === 'GET' || $request_method === 'HEAD') {
-    $upload_file_name = substr($_SERVER['PHP_SELF'], strlen($_SERVER['SCRIPT_NAME']) + 1);
+if ($request_method === 'GET' || $request_method === 'HEAD') {
+    $upload_file_name = substr($_SERVER['PHP_SELF'], strlen($_SERVER['SCRIPT_NAME'])+1);
     $sanitized_name = basename($upload_file_name);
     $store_file_name = $UPLOAD_DIR . $sanitized_name;
 
@@ -142,13 +142,13 @@ else if ($request_method === 'GET' || $request_method === 'HEAD') {
             $mime_type = 'application/octet-stream';
             header('Content-Disposition: attachment');
         }
-
+        
         header('Content-Type: ' . $mime_type);
         header('Content-Length: ' . filesize($store_file_name));
         header("Content-Security-Policy: default-src 'none'");
         header("X-Content-Security-Policy: default-src 'none'");
         header("X-WebKit-CSP: default-src 'none'");
-
+        
         if ($request_method !== 'HEAD') {
             readfile($store_file_name);
         }
@@ -161,16 +161,16 @@ else if ($request_method === 'GET' || $request_method === 'HEAD') {
 // -------------------------
 // OPTIONS (CORS preflight)
 // -------------------------
-else if ($request_method === 'OPTIONS') {
+if ($request_method === 'OPTIONS') {
     exit;
 }
 
 // -------------------------
 // BASIC HTTP AUTH (for POST uploads/deletes)
 // -------------------------
-else if ($request_method === 'POST') {
-    if (!isset($_SERVER['PHP_AUTH_USER']) ||
-        $_SERVER['PHP_AUTH_USER'] !== $AUTH_USER ||
+if ($request_method === 'POST') {
+    if (!isset($_SERVER['PHP_AUTH_USER']) || 
+        $_SERVER['PHP_AUTH_USER'] !== $AUTH_USER || 
         $_SERVER['PHP_AUTH_PW'] !== $AUTH_PASS) {
         header('WWW-Authenticate: Basic realm="Uploader"');
         header('HTTP/1.0 401 Unauthorized');
@@ -179,15 +179,30 @@ else if ($request_method === 'POST') {
     }
 
     // -------------------------
+    // EARLY QUOTA CHECK (using Content-Length, before file is buffered)
+    // This rejects oversized uploads immediately for both web and CLI uploads.
+    // -------------------------
+    $content_length = isset($_SERVER['CONTENT_LENGTH']) ? (int)$_SERVER['CONTENT_LENGTH'] : 0;
+    if ($content_length > 0) {
+        $client_ip = get_client_ip();
+        $remaining = get_remaining_quota($client_ip);
+        if ($content_length > $remaining) {
+            http_response_code(429);
+            echo 'Rate limit exceeded. You have ' . round($remaining / 1024 / 1024, 2) . ' MB remaining in your 24-hour quota.';
+            exit;
+        }
+    }
+
+    // -------------------------
     // FILE DELETE HANDLING
     // -------------------------
     if (isset($_POST['delete'])) {
-        $fileToDelete = basename($_POST['delete']);
+        $fileToDelete = basename($_POST['delete']); // sanitize filename
         $target = $UPLOAD_DIR . $fileToDelete;
 
         if (file_exists($target)) {
             if (unlink($target)) {
-                @unlink($target . '-type');
+                @unlink($target . '-type'); // Also delete type file if exists
                 echo 'Deleted successfully';
                 exit;
             } else {
@@ -223,7 +238,9 @@ else if ($request_method === 'POST') {
         }
 
         // Rate limiting check
+        // This records the usage after the early check already passed.
         $client_ip = get_client_ip();
+        
         if (!check_rate_limit($client_ip, $file['size'])) {
             $remaining = get_remaining_quota($client_ip);
             http_response_code(429);
@@ -231,7 +248,7 @@ else if ($request_method === 'POST') {
             exit;
         }
 
-        // Check if upload directory exists
+        // Check if upload directory exists (normal files)
         if (!is_dir($UPLOAD_DIR)) {
             http_response_code(500);
             echo 'Upload directory not available.';
@@ -251,11 +268,12 @@ else if ($request_method === 'POST') {
         }
 
         $originalName = basename($file['name']);
+        // Sanitize original filename (remove extension first)
         $ext = pathinfo($originalName, PATHINFO_EXTENSION);
         $nameWithoutExt = pathinfo($originalName, PATHINFO_FILENAME);
         $nameWithoutExt = preg_replace('/[^A-Za-z0-9_\-]/', '_', $nameWithoutExt);
 
-        // Generate unique filename
+        // Generate random string and append
         do {
             $random = random_string();
             $filename = $nameWithoutExt . '_' . $random . ($ext ? '.' . $ext : '');
@@ -269,7 +287,7 @@ else if ($request_method === 'POST') {
             exit;
         }
 
-        // Store MIME type
+        // Store MIME type for consistency
         file_put_contents($target . '-type', $file['type']);
 
         // Return public URL
@@ -288,7 +306,5 @@ else if ($request_method === 'POST') {
 // -------------------------
 // INVALID REQUEST METHOD
 // -------------------------
-else {
-    header('HTTP/1.0 400 Bad Request');
-}
+header('HTTP/1.0 400 Bad Request');
 ?>
