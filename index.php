@@ -100,6 +100,70 @@ function get_remaining_quota($ip) {
 }
 
 // -------------------------
+// REMOVE DATE/TIME FROM FILENAME
+// -------------------------
+function remove_datetime_from_filename($filename) {
+    $patterns = [
+        '/\d{4}-\d{2}-\d{2}/',                    // YYYY-MM-DD
+        '/\d{4}\d{2}\d{2}/',                      // YYYYMMDD
+        '/\d{2}-\d{2}-\d{4}/',                    // DD-MM-YYYY or MM-DD-YYYY
+        '/\d{2}\/\d{2}\/\d{4}/',                  // DD/MM/YYYY or MM/DD/YYYY
+        '/\d{2}\.\d{2}\.\d{4}/',                  // DD.MM.YYYY
+        '/\d{2}:\d{2}:\d{2}/',                    // HH:MM:SS
+        '/\d{2}:\d{2}/',                          // HH:MM
+        '/\d{2}-\d{2}-\d{2}/',                    // HH-MM-SS
+        '/\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}/',  // ISO 8601 full datetime
+        '/\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}/',        // ISO 8601 datetime without seconds
+        '/\d{2}[\/\-\.]\d{2}[\/\-\.]\d{2}/',      // YY-MM-DD or similar
+        '/\b\d{10}\b/',                           // 10-digit timestamp
+        '/\b\d{13}\b/',                           // 13-digit millisecond timestamp
+        '/\d{4}-\d{2}/',                          // YYYY-MM
+        '/[Jj]an|[Ff]eb|[Mm]ar|[Aa]pr|[Mm]ay|[Jj]un|[Jj]ul|[Aa]ug|[Ss]ep|[Oo]ct|[Nn]ov|[Dd]ec/i', // Month names
+        '/_\d{4}\d{2}\d{2}/',                     // _YYYYMMDD
+        '/_\d{4}-\d{2}-\d{2}/',                   // _YYYY-MM-DD
+    ];
+    
+    $sanitized = $filename;
+    foreach ($patterns as $pattern) {
+        $sanitized = preg_replace($pattern, '', $sanitized);
+    }
+    
+    // Clean up resulting double underscores, dashes, or dots
+    $sanitized = preg_replace('/[_\-\.]{2,}/', '_', $sanitized);
+    // Remove leading/trailing underscores, dashes, or dots
+    $sanitized = trim($sanitized, '_-.');
+    
+    return $sanitized;
+}
+
+// -------------------------
+// REMOVE PREPOSITION WORDS FROM FILENAME
+// -------------------------
+function remove_preposition_words($filename) {
+    // List of preposition words to remove (case-insensitive)
+    $prepositions = [
+        'from', 'by', 'to', 'via', 'till', 'until', 'at', 'in', 'on', 'with',
+        'for', 'of', 'and', 'or', 'but', 'as', 'is', 'was', 'are', 'be',
+        'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did',
+    ];
+    
+    $sanitized = $filename;
+    
+    // Remove whole word matches with word boundaries
+    foreach ($prepositions as $word) {
+        // Match word as a whole word (case-insensitive)
+        $sanitized = preg_replace('/\b' . preg_quote($word, '/') . '\b/i', '', $sanitized);
+    }
+    
+    // Clean up resulting multiple underscores and dashes (any combination)
+    $sanitized = preg_replace('/[_\-]+/', '_', $sanitized);
+    // Remove leading/trailing underscores, dashes, or dots
+    $sanitized = trim($sanitized, '_-.');
+    
+    return $sanitized;
+}
+
+// -------------------------
 // CORS HEADERS
 // -------------------------
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
@@ -271,7 +335,12 @@ if ($request_method === 'POST') {
         // Sanitize original filename (remove extension first)
         $ext = pathinfo($originalName, PATHINFO_EXTENSION);
         $nameWithoutExt = pathinfo($originalName, PATHINFO_FILENAME);
+        $nameWithoutExt = remove_datetime_from_filename($nameWithoutExt);
+        $nameWithoutExt = remove_preposition_words($nameWithoutExt);
         $nameWithoutExt = preg_replace('/[^A-Za-z0-9_\-]/', '_', $nameWithoutExt);
+        // Remove multiple consecutive underscores and dashes
+        $nameWithoutExt = preg_replace('/[_\-]+/', '_', $nameWithoutExt);
+        $nameWithoutExt = trim($nameWithoutExt, '_-');
 
         // Generate random string and append
         do {
